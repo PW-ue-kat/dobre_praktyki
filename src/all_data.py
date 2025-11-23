@@ -12,7 +12,6 @@ engine = create_engine(f'sqlite:///{db_path}', echo=False)
 Base = declarative_base()
 Session = sessionmaker(bind=engine)
 
-
 # --- 2. Define SQLAlchemy ORM Models ---
 class Movie(Base):
     __tablename__ = 'movies'
