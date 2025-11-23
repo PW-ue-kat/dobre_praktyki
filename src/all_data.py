@@ -1,243 +1,175 @@
-# 1. Importuj niezbędne moduły
 from flask import Flask, jsonify
-import csv
+from sqlalchemy import create_engine, Column, Integer, String, Float, ForeignKey
+from sqlalchemy.orm import declarative_base, sessionmaker, relationship
+import os
 
-# 2. Stwórz instancję klasy Flask
 app = Flask(__name__)
 
-
-# --- Nowy kod: Definicja klasy Movie ---
-class Rating:
-    """
-    Prosta klasa (model danych) do przechowywania informacji o filmie.
-    """
-
-    def __init__(self, userId, movieId, rating, timestamp):
-        self.userId = userId
-        self.movieId = movieId
-        self.rating = rating
-        self.timestamp = timestamp
-
-# --- Nowy kod: Definicja klasy Movie ---
-class Tag:
-    """
-    Prosta klasa (model danych) do przechowywania informacji o filmie.
-    """
-
-    def __init__(self, userId, movieId, tag, timestamp):
-        self.userId = userId
-        self.movieId = movieId
-        self.tag = tag
-        self.timestamp = timestamp
-
-# --- Nowy kod: Definicja klasy Movie ---
-class Movie:
-    """
-    Prosta klasa (model danych) do przechowywania informacji o filmie.
-    """
-
-    def __init__(self, movieId, title, genres):
-        self.movieId = movieId
-        self.title = title
-        self.genres = genres
+# --- 1. Database Setup ---
+# Point this to the location of your database file
+db_path = '../data/movies.db'
+engine = create_engine(f'sqlite:///{db_path}', echo=False)
+Base = declarative_base()
+Session = sessionmaker(bind=engine)
 
 
-# --- Nowy kod: Definicja klasy Movie ---
-class Link:
-    """
-    Prosta klasa (model danych) do przechowywania informacji o filmie.
-    """
+# --- 2. Define SQLAlchemy ORM Models ---
+class Movie(Base):
+    __tablename__ = 'movies'
+    movieId = Column(Integer, primary_key=True)
+    title = Column(String)
+    genres = Column(String)
 
-    def __init__(self, movieId, imdbId, tmdbId):
-        self.movieId = movieId
-        self.title = imdbId
-        self.genres = tmdbId
+    links = relationship("Link", back_populates="movie", uselist=False)
+    ratings = relationship("Rating", back_populates="movie")
+    tags = relationship("Tag", back_populates="movie")
+
+    def to_dict(self):
+        """Convert object to dictionary for JSON response."""
+        return {
+            'movieId': self.movieId,
+            'title': self.title,
+            'genres': self.genres
+        }
 
 
+class Link(Base):
+    __tablename__ = 'links'
+    movieId = Column(Integer, ForeignKey('movies.movieId'), primary_key=True)
+    imdbId = Column(Integer)
+    tmdbId = Column(Float)
+
+    movie = relationship("Movie", back_populates="links")
+
+    def to_dict(self):
+        return {
+            'movieId': self.movieId,
+            'imdbId': self.imdbId,
+            'tmdbId': self.tmdbId
+        }
 
 
+class Rating(Base):
+    __tablename__ = 'ratings'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    userId = Column(Integer)
+    movieId = Column(Integer, ForeignKey('movies.movieId'))
+    rating = Column(Float)
+    timestamp = Column(Integer)
+
+    movie = relationship("Movie", back_populates="ratings")
+
+    def to_dict(self):
+        return {
+            'userId': self.userId,
+            'movieId': self.movieId,
+            'rating': self.rating,
+            'timestamp': self.timestamp
+        }
 
 
+class Tag(Base):
+    __tablename__ = 'tags'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    userId = Column(Integer)
+    movieId = Column(Integer, ForeignKey('movies.movieId'))
+    tag = Column(String)
+    timestamp = Column(Integer)
+
+    movie = relationship("Movie", back_populates="tags")
+
+    def to_dict(self):
+        return {
+            'userId': self.userId,
+            'movieId': self.movieId,
+            'tag': self.tag,
+            'timestamp': self.timestamp
+        }
 
 
-# --- Nowy kod: Funkcja do wczytania filmów ---
-def load_movies_from_csv(filepath='../data/movies.csv'):
+# --- 3. Refactored Load Functions (Reading from DB) ---
 
-    """
-    Wczytuje dane z pliku CSV i zwraca listę obiektów Movie.
-    """
-    movies = []
+def load_movies_from_db():
+    session = Session()
     try:
-        with open(filepath, mode='r', encoding='utf-8') as file:
-            # Używamy DictReader, aby automatycznie mapować nagłówki na klucze słownika
-            reader = csv.DictReader(file)
-
-            # 3. Iterowanie po wierszach i tworzenie obiektów
-            for row in reader:
-                movie = Movie(row['movieId'], row['title'], row['genres'])
-                movies.append(movie)
-        print(f"Wczytano {len(movies)} filmów z pliku '{filepath}'.")
-    except FileNotFoundError:
-        print(f"BŁĄD: Nie znaleziono pliku '{filepath}'. Upewnij się, że plik istnieje.")
+        movies = session.query(Movie).all()
+        # Convert to dict immediately so we can close the session
+        return [movie.to_dict() for movie in movies]
     except Exception as e:
-        print(f"Wystąpił błąd podczas wczytywania pliku: {e}")
+        print(f"Error loading movies: {e}")
+        return []
+    finally:
+        session.close()
 
-    return movies
 
-# --- Nowy kod: Funkcja do wczytania filmów ---
-def load_ratings_from_csv(filepath='../data/ratings.csv'):
-
-    """
-    Wczytuje dane z pliku CSV i zwraca listę obiektów Movie.
-    """
-    ratings = []
+def load_links_from_db():
+    session = Session()
     try:
-        with open(filepath, mode='r', encoding='utf-8') as file:
-            # Używamy DictReader, aby automatycznie mapować nagłówki na klucze słownika
-            reader = csv.DictReader(file)
-
-            # 3. Iterowanie po wierszach i tworzenie obiektów
-            for row in reader:
-                rating = Rating(row['userId'], row['movieId'], row['rating'], row['timestamp'])
-                ratings.append(rating)
-        print(f"Wczytano {len(ratings)} ratings z pliku '{filepath}'.")
-    except FileNotFoundError:
-        print(f"BŁĄD: Nie znaleziono pliku '{filepath}'. Upewnij się, że plik istnieje.")
+        links = session.query(Link).all()
+        return [link.to_dict() for link in links]
     except Exception as e:
-        print(f"Wystąpił błąd podczas wczytywania pliku: {e}")
+        print(f"Error loading links: {e}")
+        return []
+    finally:
+        session.close()
 
-    return ratings
 
-# --- Nowy kod: Funkcja do wczytania filmów ---
-def load_tags_from_csv(filepath='../data/tags.csv'):
-
-    """
-    Wczytuje dane z pliku CSV i zwraca listę obiektów Movie.
-    """
-    tags = []
+def load_ratings_from_db():
+    session = Session()
     try:
-        with open(filepath, mode='r', encoding='utf-8') as file:
-            # Używamy DictReader, aby automatycznie mapować nagłówki na klucze słownika
-            reader = csv.DictReader(file)
-
-            # 3. Iterowanie po wierszach i tworzenie obiektów
-            for row in reader:
-                tag = Tag(row['userId'], row['movieId'], row['tag'], row['timestamp'])
-                tags.append(tag)
-        print(f"Wczytano {len(tags)} tag z pliku '{filepath}'.")
-    except FileNotFoundError:
-        print(f"BŁĄD: Nie znaleziono pliku '{filepath}'. Upewnij się, że plik istnieje.")
+        ratings = session.query(Rating).all()
+        return [rating.to_dict() for rating in ratings]
     except Exception as e:
-        print(f"Wystąpił błąd podczas wczytywania pliku: {e}")
+        print(f"Error loading ratings: {e}")
+        return []
+    finally:
+        session.close()
 
-    return tags
 
-
-
-# --- Nowy kod: Funkcja do wczytania filmów ---
-def load_links_from_csv(filepath='../data/links.csv'):
-
-    """
-    Wczytuje dane z pliku CSV i zwraca listę obiektów Movie.
-    """
-    links = []
+def load_tags_from_db():
+    session = Session()
     try:
-        with open(filepath, mode='r', encoding='utf-8') as file:
-            # Używamy DictReader, aby automatycznie mapować nagłówki na klucze słownika
-            reader = csv.DictReader(file)
-
-            # 3. Iterowanie po wierszach i tworzenie obiektów
-            for row in reader:
-                link = Link(row['movieId'], row['imdbId'], row['tmdbId'])
-                links.append(link)
-        print(f"Wczytano {len(links)} linków z pliku '{filepath}'.")
-    except FileNotFoundError:
-        print(f"BŁĄD: Nie znaleziono pliku '{filepath}'. Upewnij się, że plik istnieje.")
+        tags = session.query(Tag).all()
+        return [tag.to_dict() for tag in tags]
     except Exception as e:
-        print(f"Wystąpił błąd podczas wczytywania pliku: {e}")
-
-    return links
-
-
-
-# Wczytaj listę filmów raz, przy starcie aplikacji
-# (bardziej wydajne niż wczytywanie przy każdym żądaniu)
-movie_list = load_movies_from_csv()
-link_list = load_links_from_csv()
-rating_list = load_ratings_from_csv()
-tag_list = load_tags_from_csv()
+        print(f"Error loading tags: {e}")
+        return []
+    finally:
+        session.close()
 
 
-# --- Koniec nowego kodu ---
+# --- 4. Flask Routes ---
 
-
-# 3. Definicja trasy głównej (pozostaje bez zmian)
 @app.route('/')
 def hello_world():
-    """
-    Ta funkcja uruchamia się dla trasy '/' (strona główna).
-    """
-    return 'Hello, World!'
+    return 'Hello, World! The database is connected.'
 
 
-# --- Nowy kod: Trasa /movies ---
 @app.route('/movies')
 def get_movies():
-    """
-    Zwraca pełną listę filmów w formacie JSON.
-    """
-    # 4. Wykorzystanie metody magicznej __dict__ do serializacji
-    #    Używamy list comprehension do konwersji każdego obiektu Movie na słownik
-    serialized_movies = [movie.__dict__ for movie in movie_list]
-
-    # 5. Zwrócenie listy zserializowanych obiektów jako JSON
-    return jsonify(serialized_movies)
-
+    movies_data = load_movies_from_db()
+    return jsonify(movies_data)
 
 
 @app.route('/links')
 def get_links():
-    """
-    Zwraca pełną listę filmów w formacie JSON.
-    """
-    # 4. Wykorzystanie metody magicznej __dict__ do serializacji
-    #    Używamy list comprehension do konwersji każdego obiektu Movie na słownik
-    serialized_links = [link.__dict__ for link in link_list]
+    links_data = load_links_from_db()
+    return jsonify(links_data)
 
-    # 5. Zwrócenie listy zserializowanych obiektów jako JSON
-    return jsonify(serialized_links)
 
 @app.route('/tags')
 def get_tags():
-    """
-    Zwraca pełną listę filmów w formacie JSON.
-    """
-    # 4. Wykorzystanie metody magicznej __dict__ do serializacji
-    #    Używamy list comprehension do konwersji każdego obiektu Movie na słownik
-    serialized_tags = [tag.__dict__ for tag in tag_list]
-
-    # 5. Zwrócenie listy zserializowanych obiektów jako JSON
-    return jsonify(serialized_tags)
+    tags_data = load_tags_from_db()
+    return jsonify(tags_data)
 
 
 @app.route('/ratings')
 def get_ratings():
-    """
-    Zwraca pełną listę filmów w formacie JSON.
-    """
-    # 4. Wykorzystanie metody magicznej __dict__ do serializacji
-    #    Używamy list comprehension do konwersji każdego obiektu Movie na słownik
-    serialized_ratings = [rating.__dict__ for rating in rating_list]
-
-    # 5. Zwrócenie listy zserializowanych obiektów jako JSON
-    return jsonify(serialized_ratings)
+    # Warning: This table can be very large.
+    # In a real app, you would likely want to limit this query or paginate.
+    ratings_data = load_ratings_from_db()
+    return jsonify(ratings_data)
 
 
-
-
-
-
-# 4. Sprawdzenie, czy skrypt jest uruchamiany bezpośrednio
 if __name__ == '__main__':
-    # 5. Uruchomienie aplikacji
     app.run(debug=True, host='0.0.0.0', port=5001)
