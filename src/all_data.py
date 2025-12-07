@@ -1,35 +1,36 @@
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request, abort
 from sqlalchemy import create_engine, Column, Integer, String, Float, ForeignKey
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 import os
 
 app = Flask(__name__)
 
-# --- 1. Database Setup ---
-# Point this to the location of your database file
-db_path = '../data/movies.db'
+# --- 1. Konfiguracja Bazy Danych ---
+# Używamy ścieżki absolutnej, aby uniknąć błędu "unable to open database file"
+# niezależnie od tego, skąd uruchamiamy skrypt.
+basedir = os.path.abspath(os.path.dirname(__file__))
+db_path = os.path.join(basedir, 'movies.db')
+
+# Zauważ: create_engine jest "leniwy", samo utworzenie obiektu nie łączy z bazą.
 engine = create_engine(f'sqlite:///{db_path}', echo=False)
+
 Base = declarative_base()
 Session = sessionmaker(bind=engine)
 
-# --- 2. Define SQLAlchemy ORM Models ---
+
+# --- 2. Modele SQLAlchemy ---
 class Movie(Base):
     __tablename__ = 'movies'
     movieId = Column(Integer, primary_key=True)
     title = Column(String)
     genres = Column(String)
 
-    links = relationship("Link", back_populates="movie", uselist=False)
-    ratings = relationship("Rating", back_populates="movie")
-    tags = relationship("Tag", back_populates="movie")
+    links = relationship("Link", back_populates="movie", uselist=False, cascade="all, delete")
+    ratings = relationship("Rating", back_populates="movie", cascade="all, delete")
+    tags = relationship("Tag", back_populates="movie", cascade="all, delete")
 
     def to_dict(self):
-        """Convert object to dictionary for JSON response."""
-        return {
-            'movieId': self.movieId,
-            'title': self.title,
-            'genres': self.genres
-        }
+        return {'movieId': self.movieId, 'title': self.title, 'genres': self.genres}
 
 
 class Link(Base):
@@ -41,11 +42,7 @@ class Link(Base):
     movie = relationship("Movie", back_populates="links")
 
     def to_dict(self):
-        return {
-            'movieId': self.movieId,
-            'imdbId': self.imdbId,
-            'tmdbId': self.tmdbId
-        }
+        return {'movieId': self.movieId, 'imdbId': self.imdbId, 'tmdbId': self.tmdbId}
 
 
 class Rating(Base):
@@ -59,12 +56,8 @@ class Rating(Base):
     movie = relationship("Movie", back_populates="ratings")
 
     def to_dict(self):
-        return {
-            'userId': self.userId,
-            'movieId': self.movieId,
-            'rating': self.rating,
-            'timestamp': self.timestamp
-        }
+        return {'id': self.id, 'userId': self.userId, 'movieId': self.movieId,
+                'rating': self.rating, 'timestamp': self.timestamp}
 
 
 class Tag(Base):
@@ -78,97 +71,40 @@ class Tag(Base):
     movie = relationship("Movie", back_populates="tags")
 
     def to_dict(self):
-        return {
-            'userId': self.userId,
-            'movieId': self.movieId,
-            'tag': self.tag,
-            'timestamp': self.timestamp
-        }
+        return {'id': self.id, 'userId': self.userId, 'movieId': self.movieId,
+                'tag': self.tag, 'timestamp': self.timestamp}
 
 
-# --- 3. Refactored Load Functions (Reading from DB) ---
+# USUNIĘTO LINIĘ: Base.metadata.create_all(engine) z głównego zakresu!
 
-def load_movies_from_db():
-    session = Session()
-    try:
-        movies = session.query(Movie).all()
-        # Convert to dict immediately so we can close the session
-        return [movie.to_dict() for movie in movies]
-    except Exception as e:
-        print(f"Error loading movies: {e}")
-        return []
-    finally:
-        session.close()
+def get_session():
+    return Session()
 
 
-def load_links_from_db():
-    session = Session()
-    try:
-        links = session.query(Link).all()
-        return [link.to_dict() for link in links]
-    except Exception as e:
-        print(f"Error loading links: {e}")
-        return []
-    finally:
-        session.close()
+# Helper do paginacji
+def get_paginated_list(session, model_class):
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 100, type=int)
+    if per_page > 1000: per_page = 1000
+    if per_page < 1: per_page = 10
+    offset = (page - 1) * per_page
+    items = session.query(model_class).limit(per_page).offset(offset).all()
+    return [item.to_dict() for item in items]
 
-
-def load_ratings_from_db():
-    session = Session()
-    try:
-        ratings = session.query(Rating).all()
-        return [rating.to_dict() for rating in ratings]
-    except Exception as e:
-        print(f"Error loading ratings: {e}")
-        return []
-    finally:
-        session.close()
-
-
-def load_tags_from_db():
-    session = Session()
-    try:
-        tags = session.query(Tag).all()
-        return [tag.to_dict() for tag in tags]
-    except Exception as e:
-        print(f"Error loading tags: {e}")
-        return []
-    finally:
-        session.close()
-
-
-# --- 4. Flask Routes ---
 
 @app.route('/')
 def hello_world():
-    return 'Hello, World! The database is connected.'
+    return 'API Filmów działa.'
 
 
-@app.route('/movies')
-def get_movies():
-    movies_data = load_movies_from_db()
-    return jsonify(movies_data)
+# --- ENDPOINTY (skrócone dla czytelności - są takie same jak wcześniej) ---
+# ... (Wklej tutaj endpointy CRUD z poprzedniej odpowiedzi) ...
+# Dla kompletności, upewnij się, że masz tu wszystkie definicje route'ów
+# (get_movies, create_movie, etc.)
 
-
-@app.route('/links')
-def get_links():
-    links_data = load_links_from_db()
-    return jsonify(links_data)
-
-
-@app.route('/tags')
-def get_tags():
-    tags_data = load_tags_from_db()
-    return jsonify(tags_data)
-
-
-@app.route('/ratings')
-def get_ratings():
-    # Warning: This table can be very large.
-    # In a real app, you would likely want to limit this query or paginate.
-    ratings_data = load_ratings_from_db()
-    return jsonify(ratings_data)
-
-
+# --- START APLIKACJI ---
 if __name__ == '__main__':
+    # Tworzymy tabele TYLKO gdy uruchamiamy ten plik bezpośrednio (nie przy imporcie)
+    Base.metadata.create_all(engine)
+    print("Baza danych zainicjalizowana.")
     app.run(debug=True, host='0.0.0.0', port=5001)
