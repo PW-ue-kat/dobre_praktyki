@@ -1,0 +1,5 @@
+username,password,roles
+admin,admin123,"ROLE_ADMIN,ROLE_USER"
+jan,janek123,ROLE_USER
+kasia,kasia123,ROLE_USER
+superadmin,super123,"ROLE_ADMIN,ROLE_USER"
